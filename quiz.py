@@ -1,82 +1,45 @@
 import os
+import schedule
 from dotenv import load_dotenv
-import sqlite3
-from telegram.ext import Application, CommandHandler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import random
-import asyncio
+import time
+import telebot
+import openai
+from datetime import datetime
 
-# 載入環境變量
+# 載入 .env 文件中的環境變數
 load_dotenv()
 
-# 設置 Telegram Bot Token
+# 從環境變數獲取 Telegram Bot Token 和 OpenAI API Key
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+USER_ID = '1924319284'
 
-# 連接到 SQLite 數據庫
-conn = sqlite3.connect('quiz_bot.db')
-cursor = conn.cursor()
+# 初始化Telegram bot和OpenAI
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# 創建題目表和用戶表
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS questions (
-    id INTEGER PRIMARY KEY,
-    question TEXT,
-    option_a TEXT,
-    option_b TEXT,
-    option_c TEXT,
-    option_d TEXT,
-    correct_answer TEXT,
-    explanation TEXT
-)
-''')
+def generate_toeic_questions():
+    prompt = "Generate 3 TOEIC reading comprehension questions with answers. Format each question with its options and the correct answer."
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": "You are a TOEIC test creator."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message.content.strip()
 
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS subscribers (
-    user_id INTEGER PRIMARY KEY
-)
-''')
+def send_questions():
+    questions = generate_toeic_questions()
+    bot.send_message(USER_ID, f"Here are your TOEIC questions for {datetime.now().strftime('%Y-%m-%d %H:%M')}:\n\n{questions}")
 
-conn.commit()
+def schedule_jobs():
+    schedule.every().day.at("06:00").do(send_questions)
+    schedule.every().day.at("12:00").do(send_questions)
+    schedule.every().day.at("18:00").do(send_questions)
 
-async def start(update, context):
-    user_id = update.effective_user.id
-    cursor.execute("INSERT OR IGNORE INTO subscribers (user_id) VALUES (?)", (user_id,))
-    conn.commit()
-    await update.message.reply_text("您已成功訂閱每日測驗！")
-
-async def send_quiz():
-    # 從數據庫中隨機選擇三道題目
-    cursor.execute("SELECT * FROM questions ORDER BY RANDOM() LIMIT 3")
-    questions = cursor.fetchall()
-
-    # 獲取所有訂閱者
-    cursor.execute("SELECT user_id FROM subscribers")
-    subscribers = cursor.fetchall()
-
-    for user_id in subscribers:
-        quiz_message = "今日測驗題目：\n\n"
-        for i, q in enumerate(questions, 1):
-            quiz_message += f"{i}. {q[1]}\n"
-            quiz_message += f"A. {q[2]}\nB. {q[3]}\nC. {q[4]}\nD. {q[5]}\n"
-            quiz_message += f"正確答案：{q[6]}\n"
-            quiz_message += f"解釋：{q[7]}\n\n"
-
-        # 發送消息給每個訂閱者
-        await context.bot.send_message(chat_id=user_id[0], text=quiz_message)
-
-def main():
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # 添加處理程序
-    application.add_handler(CommandHandler("start", start))
-
-    # 設置定時任務
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_quiz, 'cron', hour='6,12,18')
-    scheduler.start()
-
-    # 啟動機器人
-    application.run_polling()
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    schedule_jobs()
+    while True:
+        schedule.run_pending()
+        time.sleep(1)

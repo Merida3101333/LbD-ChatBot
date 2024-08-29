@@ -35,7 +35,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 {"role": "user", "content": user_message}
             ]
         )
-        
+    
         bot_reply = response.choices[0].message.content.strip()
         
         # 發送回覆給用戶
